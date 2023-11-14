@@ -35,6 +35,11 @@ from vocode.streaming.models.agent import (
     AgentConfig,
     ChatGPTAgentConfig,
     LLMAgentConfig,
+    EndInputStream,
+    InputStreamChunk,
+    InputStreamMessage,
+    StartInputStream,
+
 )
 from vocode.streaming.models.message import BaseMessage
 from vocode.streaming.models.model import BaseModel, TypedModel
@@ -47,6 +52,12 @@ from vocode.streaming.utils.worker import (
     InterruptableEvent,
     InterruptableEventFactory,
     InterruptableWorker,
+)
+from vocode.streaming.agent.utils import (
+    format_openai_chat_messages_from_transcript,
+    collate_response_async,
+    openai_get_tokens,
+    vector_db_result_to_openai_chat_message,
 )
 
 if TYPE_CHECKING:
@@ -101,6 +112,13 @@ class AgentResponseMessage(AgentResponse, type=AgentResponseType.MESSAGE.value):
 
 class AgentResponseStop(AgentResponse, type=AgentResponseType.STOP.value):
     pass
+
+# class AgentResponseMessageChunk(
+#     AgentResponse, type=AgentResponseType.MESSAGE_CHUNK.value
+# ):
+#     chunk: InputStreamMessage
+#     is_interruptible: bool = True
+
 
 
 class AgentResponseFillerAudio(
@@ -226,28 +244,51 @@ class RespondAgent(BaseAgent[AgentConfigType]):
         agent_span_first = tracer.start_span(
             f"{tracer_name_start}.generate_first"  # type: ignore
         )
-        responses = self.generate_response(
-            transcription.message,
-            is_interrupt=transcription.is_interrupt,
-            conversation_id=conversation_id,
-            confidence=transcription.confidence,
-        )
+
+        if self.agent_config.stream_input_to_synthesizer:
+
+            responses = self.generate_response_as_generator(
+                transcription.message,
+                is_interrupt=transcription.is_interrupt,
+                conversation_id=conversation_id,
+                confidence=transcription.confidence,
+            )
+        else:
+            responses = self.generate_response(
+                transcription.message,
+                is_interrupt=transcription.is_interrupt,
+                conversation_id=conversation_id,
+                confidence=transcription.confidence,
+            )
+
+        # print('responses_'*5)
+        # print(responses)
+        # print('responses_'*5)
+
         is_first_response = True
         function_call = None
-        async for response, is_interruptable in responses:
-            if isinstance(response, FunctionCall):
-                function_call = response
-                continue
-            if is_first_response:
-                agent_span_first.end()
-                is_first_response = False
+        if self.agent_config.stream_input_to_synthesizer:
             self.produce_interruptable_agent_response_event_nonblocking(
-                AgentResponseMessage(message=BaseMessage(text=response)),
-                is_interruptable=self.agent_config.allow_agent_to_be_cut_off and is_interruptable,
+                responses,
+                is_interruptable=self.agent_config.allow_agent_to_be_cut_off,
                 agent_response_tracker=agent_input.agent_response_tracker,
             )
-        # TODO: implement should_stop for generate_responses
-        agent_span.end()
+        else:
+            async for response, is_interruptable in responses:
+
+                if isinstance(response, FunctionCall):
+                    function_call = response
+                    continue
+                if is_first_response:
+                    agent_span_first.end()
+                    is_first_response = False
+                self.produce_interruptable_agent_response_event_nonblocking(
+                    AgentResponseMessage(message=BaseMessage(text=response)),
+                    is_interruptable=self.agent_config.allow_agent_to_be_cut_off and is_interruptable,
+                    agent_response_tracker=agent_input.agent_response_tracker,
+                )
+            # TODO: implement should_stop for generate_responses
+            agent_span.end()
         if function_call and self.agent_config.actions is not None:
             await self.call_function(function_call, agent_input)
         return False
@@ -455,6 +496,17 @@ class RespondAgent(BaseAgent[AgentConfigType]):
             is_interrupt: bool = False,
             confidence: float = 1,
     ) -> AsyncGenerator[
+        Tuple[Union[str, FunctionCall], bool], None
+    ]:  # tuple of the content and whether it is interruptable
+        raise NotImplementedError
+
+    def generate_response_as_generator(
+            self,
+            human_input,
+            conversation_id: str,
+            is_interrupt: bool = False,
+            confidence: float = 1,
+    ) -> Generator[
         Tuple[Union[str, FunctionCall], bool], None
     ]:  # tuple of the content and whether it is interruptable
         raise NotImplementedError

@@ -332,6 +332,11 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 return
             try:
                 agent_response = item.payload
+
+                # print('Agent_response_type****'*3)
+                # print(agent_response)
+                # print('Agent_response_type****'*3)
+
                 if isinstance(agent_response, AgentResponseFillerAudio):
                     self.send_filler_audio(item.agent_response_tracker)
                     return
@@ -340,28 +345,48 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     item.agent_response_tracker.set()
                     await self.conversation.terminate()
                     return
+                # print('#'*20)
+                # print(self.conversation.agent.agent_config.stream_input_to_synthesizer)
+                # print('#'*20)
 
-                agent_response_message = typing.cast(
-                    AgentResponseMessage, agent_response
-                )
-
-                if self.conversation.filler_audio_worker is not None:
-                    if (
-                            self.conversation.filler_audio_worker.interrupt_current_filler_audio()
-                    ):
-                        await self.conversation.filler_audio_worker.wait_for_random_audio_to_finish()
-
-                self.conversation.logger.debug("Synthesizing speech for message")
-                synthesis_result = await self.conversation.synthesizer.create_speech(
-                    agent_response_message.message,
+                if self.conversation.agent.agent_config.stream_input_to_synthesizer:
+                    # message_sent = ''
+                    # for chunk in agent_response_message:
+                    #     message_sent += chunk
+                    #     message_sent += ' '
+                    text_message, synthesis_result = await self.conversation.synthesizer.create_speech(
+                    agent_response,
                     self.chunk_size,
                     bot_sentiment=self.conversation.bot_sentiment,
                 )
-                self.produce_interruptable_agent_response_event_nonblocking(
-                    (agent_response_message.message, synthesis_result),
-                    is_interruptable=item.is_interruptable,
-                    agent_response_tracker=item.agent_response_tracker,
+                    self.produce_interruptable_agent_response_event_nonblocking(
+                        (text_message, synthesis_result),
+                        is_interruptable=item.is_interruptable,
+                        agent_response_tracker=item.agent_response_tracker,
+                    )
+                    
+                else:
+                    agent_response_message = typing.cast(
+                    AgentResponseMessage, agent_response
                 )
+                
+                    if self.conversation.filler_audio_worker is not None:
+                        if (
+                                self.conversation.filler_audio_worker.interrupt_current_filler_audio()
+                        ):
+                            await self.conversation.filler_audio_worker.wait_for_random_audio_to_finish()
+
+                    self.conversation.logger.debug("Synthesizing speech for message")
+                    synthesis_result = await self.conversation.synthesizer.create_speech(
+                        agent_response_message.message,
+                        self.chunk_size,
+                        bot_sentiment=self.conversation.bot_sentiment,
+                    )
+                    self.produce_interruptable_agent_response_event_nonblocking(
+                        (agent_response_message.message, synthesis_result),
+                        is_interruptable=item.is_interruptable,
+                        agent_response_tracker=item.agent_response_tracker,
+                    )
             except asyncio.CancelledError:
                 pass
 
@@ -385,6 +410,10 @@ class StreamingConversation(Generic[OutputDeviceType]):
         ):
             try:
                 message, synthesis_result = item.payload
+                print('send_speech_to_output_message')
+                print(message)
+                print('send_speech_to_output_message')
+
                 # create an empty transcript message and attach it to the transcript
                 transcript_message = Message(
                     text="",
@@ -396,13 +425,23 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     publish_to_events_manager=False,
                 )
 
-                message_sent, cut_off = await self.conversation.send_speech_to_output(
-                    message.text,
+
+                if self.conversation.agent.agent_config.stream_input_to_synthesizer:
+                    message_sent, cut_off = await self.conversation.send_speech_to_output(
+                    message,
                     synthesis_result,
                     item.interruption_event,
                     TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS,
                     transcript_message=transcript_message,
                 )
+                else:
+                    message_sent, cut_off = await self.conversation.send_speech_to_output(
+                        message.text,
+                        synthesis_result,
+                        item.interruption_event,
+                        TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS,
+                        transcript_message=transcript_message,
+                    )
                 # publish the transcript message now that it includes what was said during send_speech_to_output
                 self.conversation.transcript.maybe_publish_transcript_event_from_message(
                     message=transcript_message,

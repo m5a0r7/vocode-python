@@ -221,6 +221,8 @@ class BaseSynthesizer(Generic[SynthesizerConfigType]):
         words_per_second = words_per_minute / 60
         estimated_words_spoken = math.floor(words_per_second * seconds)
         tokens = word_tokenize(message.text)
+        # tokens = word_tokenize('Hello')
+
         return TreebankWordDetokenizer().detokenize(tokens[:estimated_words_spoken])
 
     # returns a chunk generator and a thunk that can tell you what part of the message was read given the number of seconds spoken
@@ -305,7 +307,7 @@ class BaseSynthesizer(Generic[SynthesizerConfigType]):
 
         if isinstance(self.synthesizer_config, UpdatedPlayHtSynthesizerConfig): 
             async def async_response(response):
-                for i in response:
+                async for i in response:
                     yield i
 
             async def send_chunks():
@@ -313,8 +315,14 @@ class BaseSynthesizer(Generic[SynthesizerConfigType]):
                     try:
                         stream = async_response(response)
                         chunk = await anext(stream)
+                        if isinstance(chunk, bytes):
                         # print(chunk)
-                        miniaudio_worker.consume_nonblocking(chunk)
+                            miniaudio_worker.consume_nonblocking(chunk)
+                        else:
+                            print('text_chunk__________'*5)
+                            print(chunk)
+                            print('text_chunk__________'*5)
+
                     except StopAsyncIteration:
                         miniaudio_worker.consume_nonblocking(None)
                         break

@@ -97,6 +97,32 @@ async def openai_get_tokens(gen) -> AsyncGenerator[Union[str, FunctionFragment],
             )
 
 
+def sync_openai_get_tokens(gen):
+    for event in gen:
+        choices = event.get("choices", [])
+        if len(choices) == 0:
+            continue
+        choice = choices[0]
+        if choice.finish_reason:
+            break
+        delta = choice.get("delta", {})
+        if "text" in delta and delta["text"] is not None:
+            token = delta["text"]
+            yield token
+        if "content" in delta and delta["content"] is not None:
+            token = delta["content"]
+            yield token
+        elif "function_call" in delta and delta["function_call"] is not None:
+            yield FunctionFragment(
+                name=delta["function_call"]["name"]
+                if "name" in delta["function_call"]
+                else "",
+                arguments=delta["function_call"]["arguments"]
+                if "arguments" in delta["function_call"]
+                else "",
+            )
+
+
 def find_last_punctuation(buffer: str) -> Optional[int]:
     indices = [buffer.rfind(ending) for ending in SENTENCE_ENDINGS]
     if not indices:
@@ -132,12 +158,18 @@ def format_openai_chat_messages_from_transcript(
                 current_log = transcript.event_logs[idx]
             except IndexError:
                 break
+
+
+
         if bot_messages_buffer:
             merged_bot_message = deepcopy(bot_messages_buffer[-1])
             merged_bot_message.text = " ".join(
                 event_log.text for event_log in bot_messages_buffer
             )
             new_event_logs.append(merged_bot_message)
+            print('bot_messages_buffer******'*3)
+            print(merged_bot_message.text)
+            print('bot_messages_buffer******'*3)
         else:
             new_event_logs.append(current_log)
             idx += 1

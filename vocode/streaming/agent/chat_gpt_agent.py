@@ -3,7 +3,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import openai
-from typing import AsyncGenerator, Optional, Tuple
+from typing import AsyncGenerator, Optional, Tuple, Generator
 
 import logging
 from pydantic import BaseModel
@@ -18,6 +18,7 @@ from vocode.streaming.agent.utils import (
     collate_response_async,
     openai_get_tokens,
     vector_db_result_to_openai_chat_message,
+    sync_openai_get_tokens
 )
 from vocode.streaming.models.events import Sender
 from vocode.streaming.models.transcript import Transcript
@@ -125,9 +126,18 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
             self.is_first_response = False
             text = self.first_response
         else:
-            chat_parameters = self.get_chat_parameters()
-            chat_completion = await openai.ChatCompletion.acreate(**chat_parameters)
-            text = chat_completion.choices[0].message.content
+
+            if self.agent_config.stream_input_to_synthesizer:
+                print('respond_'*7)
+                chat_parameters = self.get_chat_parameters()
+                chat_completion = await openai.ChatCompletion.acreate(**chat_parameters)
+                text = chat_completion
+            else:
+                chat_parameters = self.get_chat_parameters()
+                chat_completion = await openai.ChatCompletion.acreate(**chat_parameters)
+                text = chat_completion.choices[0].message.content
+                
+
         self.logger.debug(f"LLM response: {text}")
         return text, False
 
@@ -181,9 +191,38 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
             chat_parameters = self.get_chat_parameters()
         chat_parameters["stream"] = True
         stream = await openai.ChatCompletion.acreate(**chat_parameters)
-        async for message in collate_response_async(
-                openai_get_tokens(stream), get_functions=True
-        ):
-            # message += ' <break time="1s" /> '
-            print(message)
+
+        if self.agent_config.stream_input_to_synthesizer:
+            # async for message in openai_get_tokens(stream):
+            #     yield message, True
+            print("Genertating response_"*5)
+            yield openai_get_tokens(stream)
+        else:
+            async for message in collate_response_async(
+                    openai_get_tokens(stream), get_functions=True
+            ):
+                yield message, True
+
+
+
+
+    async def generate_response_as_generator(
+            self,
+            human_input: str,
+            conversation_id: str,
+            is_interrupt: bool = False,
+            confidence: float = 1,
+    ):
+        
+        assert self.transcript is not None
+        chat_parameters = {}
+        chat_parameters = self.get_chat_parameters()
+        chat_parameters["stream"] = True
+        stream = await openai.ChatCompletion.acreate(**chat_parameters)
+        # print('generate_response_as_generator_generate_response_as_generator_generate_response_as_generator')
+        # print(type(openai_get_tokens(stream)))
+
+        async for message in openai_get_tokens(stream):
             yield message, True
+        # for message in openai_get_tokens(stream):
+        #     yield message

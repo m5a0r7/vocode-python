@@ -47,6 +47,10 @@ class MiniaudioWorker(ThreadAsyncWorker[Union[bytes, None]]):
                 current_wav_output_buffer.clear()
                 continue
             try:
+                # print('mp3_chunk_______'*5)
+                # print(mp3_chunk)
+                # print('mp3_chunk_______'*5)
+
                 current_mp3_buffer.extend(mp3_chunk)
                 output_bytes = decode_mp3(bytes(current_mp3_buffer))
             except miniaudio.DecodeError as e:

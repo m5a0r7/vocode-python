@@ -112,6 +112,7 @@ class ChatGPTAgentConfig(AgentConfig, type=AgentType.CHAT_GPT.value):
     low_confidence_response: Optional[LowConfidenceResponse] = None
     azure_params: Optional[AzureOpenAIConfig] = None
     vector_db_config: Optional[VectorDBConfig] = None
+    stream_input_to_synthesizer = False
 
 
 class ChatAnthropicAgentConfig(AgentConfig, type=AgentType.CHAT_ANTHROPIC.value):
@@ -185,3 +186,17 @@ class RESTfulAgentText(RESTfulAgentOutput, type=RESTfulAgentOutputType.TEXT):
 
 class RESTfulAgentEnd(RESTfulAgentOutput, type=RESTfulAgentOutputType.END):
     pass
+
+class StartInputStream(BaseModel):
+    pass
+
+
+class InputStreamChunk(BaseModel):
+    text: str
+
+
+class EndInputStream(BaseModel):
+    pass
+
+
+InputStreamMessage = Union[StartInputStream, InputStreamChunk, EndInputStream]
